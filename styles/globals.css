@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #FEFAE0;
+  --bg-secondary: #EFDCAC;
+  --border: #D4A373;
+  --accent: #BC6C25;
+  --text-primary: #45462A;
+  --text-secondary: #606C38;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #45462A;
+  --bg-secondary: #606C38;
+  --border: #BC6C25;
+  --accent: #EFDCAC;
+  --text-primary: #FEFAE0;
+  --text-secondary: #D4A373;
+}
