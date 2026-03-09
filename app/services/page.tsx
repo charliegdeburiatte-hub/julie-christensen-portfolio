@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 }
 
 export default async function ServicesPage() {
-  const services = await client.fetch<Service[]>(servicesQuery)
+  const services = await client.fetch<Service[]>(servicesQuery).catch(() => [])
 
   return (
     <div className="min-h-screen py-20 px-6">

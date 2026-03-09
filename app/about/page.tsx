@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 }
 
 export default async function AboutPage() {
-  const settings = await client.fetch<SiteSettings | null>(siteSettingsQuery)
+  const settings = await client.fetch<SiteSettings | null>(siteSettingsQuery).catch(() => null)
 
   return (
     <div className="min-h-screen py-20 px-6">

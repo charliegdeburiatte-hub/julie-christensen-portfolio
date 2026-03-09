@@ -26,10 +26,10 @@ export const metadata: Metadata = {
 
 export default async function HomePage() {
   const [settings, projects, testimonial, services] = await Promise.all([
-    client.fetch<SiteSettings | null>(siteSettingsQuery),
-    client.fetch<Project[]>(featuredProjectsQuery),
-    client.fetch<Testimonial | null>(featuredTestimonialQuery),
-    client.fetch<Service[]>(servicesQuery),
+    client.fetch<SiteSettings | null>(siteSettingsQuery).catch(() => null),
+    client.fetch<Project[]>(featuredProjectsQuery).catch(() => []),
+    client.fetch<Testimonial | null>(featuredTestimonialQuery).catch(() => null),
+    client.fetch<Service[]>(servicesQuery).catch(() => []),
   ])
 
   return (
