@@ -11,6 +11,7 @@ import {
   servicesQuery,
 } from '@/lib/sanity/queries'
 import type { Project, Service, Testimonial, SiteSettings } from '@/lib/sanity/types'
+import { InkDropSplash } from '@/components/sections/InkDropSplash'
 import { Hero } from '@/components/sections/Hero'
 import { FeaturedWork } from '@/components/sections/FeaturedWork'
 import { AboutSnippet } from '@/components/sections/AboutSnippet'
@@ -34,6 +35,7 @@ export default async function HomePage() {
 
   return (
     <>
+      <InkDropSplash />
       <Hero settings={settings} />
       <FeaturedWork projects={projects ?? []} />
       <AboutSnippet />
