@@ -2,12 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-function easeInOut(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+function easeOut(t: number): number {
+  return 1 - Math.pow(1 - t, 3)
 }
 
-const DELAY_MS = 500    // pause before ink starts spreading
-const DURATION_MS = 2000 // total animation length
+const DELAY_MS = 600
+const DURATION_MS = 3800
 
 export function InkDropSplash() {
   const ellipseRef = useRef<SVGEllipseElement>(null)
@@ -16,7 +16,6 @@ export function InkDropSplash() {
   const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
-    // Skip splash if already seen this session
     if (sessionStorage.getItem('julie-splash-done')) {
       setDone(true)
       return
@@ -27,23 +26,19 @@ export function InkDropSplash() {
         if (!startTimeRef.current) startTimeRef.current = timestamp
         const elapsed = timestamp - startTimeRef.current
         const raw = Math.min(elapsed / DURATION_MS, 1)
-        const progress = easeInOut(raw)
+        const progress = easeOut(raw)
 
         const ellipse = ellipseRef.current
         if (ellipse) {
           const vw = window.innerWidth
           const vh = window.innerHeight
 
-          // Ellipse grows from below viewport upward and outward
-          const rx = vw * 1.4 * progress
-          const ry = vh * 1.5 * progress
-          const cx = vw / 2
-          const startCy = vh + 80
-          const endCy = vh * 0.45
-          const cy = startCy - (startCy - endCy) * progress
+          // Grows from center outward — needs to overshoot viewport edges
+          const rx = vw * 1.6 * progress
+          const ry = vh * 1.6 * progress
 
-          ellipse.setAttribute('cx', String(cx))
-          ellipse.setAttribute('cy', String(cy))
+          ellipse.setAttribute('cx', String(vw / 2))
+          ellipse.setAttribute('cy', String(vh / 2))
           ellipse.setAttribute('rx', String(rx))
           ellipse.setAttribute('ry', String(ry))
         }
@@ -70,41 +65,35 @@ export function InkDropSplash() {
   return (
     <div className="fixed inset-0" style={{ zIndex: 100 }}>
 
-      {/* Warm background — visible through the growing ink hole */}
-      <div
-        className="absolute inset-0 flex flex-col items-center justify-center gap-3"
-        style={{ backgroundColor: '#f5f2ee' }}
-      >
-        <h1
-          className="font-seasons font-light tracking-widest"
-          style={{ fontSize: 'clamp(3rem, 10vw, 7rem)', color: '#3a2e1e' }}
-        >
-          Julie
-        </h1>
-        <p
-          className="font-seasons italic tracking-wide"
-          style={{ fontSize: 'clamp(1rem, 2.5vw, 1.5rem)', color: '#8a7560' }}
-        >
-          Your story, told with care.
-        </p>
-      </div>
-
-      {/* Dark green overlay with growing ink-drop hole */}
+      {/* SVG: dark green overlay with ink hole growing from center */}
       <svg
         className="absolute inset-0 w-full h-full"
         xmlns="http://www.w3.org/2000/svg"
         style={{ pointerEvents: 'none' }}
       >
         <defs>
-          {/* Blur gives the soft feathered ink-bleed edge */}
-          <filter id="splash-blur" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="22" />
+          {/* Turbulence displaces the ellipse edge to look like spreading ink */}
+          <filter id="ink-filter" x="-30%" y="-30%" width="160%" height="160%">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.025"
+              numOctaves="4"
+              seed="8"
+              result="noise"
+            />
+            <feDisplacementMap
+              in="SourceGraphic"
+              in2="noise"
+              scale="55"
+              xChannelSelector="R"
+              yChannelSelector="G"
+              result="displaced"
+            />
+            <feGaussianBlur in="displaced" stdDeviation="10" />
           </filter>
 
-          <mask id="splash-mask">
-            {/* White = show overlay (green) */}
+          <mask id="ink-mask">
             <rect width="100%" height="100%" fill="white" />
-            {/* Black ellipse = cut hole through overlay, soft edge via blur */}
             <ellipse
               ref={ellipseRef}
               cx="0"
@@ -112,19 +101,34 @@ export function InkDropSplash() {
               rx="0"
               ry="0"
               fill="black"
-              filter="url(#splash-blur)"
+              filter="url(#ink-filter)"
             />
           </mask>
         </defs>
 
-        {/* The green overlay — hole grows as ellipse expands */}
         <rect
           width="100%"
           height="100%"
           fill="#1a3a2a"
-          mask="url(#splash-mask)"
+          mask="url(#ink-mask)"
         />
       </svg>
+
+      {/* Name + tagline on top of the green — fades out as hole engulfs them */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none">
+        <h1
+          className="font-seasons font-light tracking-widest"
+          style={{ fontSize: 'clamp(3rem, 10vw, 7rem)', color: '#f0ebe3' }}
+        >
+          Julie
+        </h1>
+        <p
+          className="font-seasons italic tracking-wide"
+          style={{ fontSize: 'clamp(1rem, 2.5vw, 1.4rem)', color: '#a89070' }}
+        >
+          Your story, told with care.
+        </p>
+      </div>
 
     </div>
   )
