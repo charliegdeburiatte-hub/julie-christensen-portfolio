@@ -2,135 +2,130 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-// Easing function — ease-in-out cubic
 function easeInOut(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 }
 
+const DELAY_MS = 500    // pause before ink starts spreading
+const DURATION_MS = 2000 // total animation length
+
 export function InkDropSplash() {
-  const sectionRef = useRef<HTMLDivElement>(null)
-  const overlayRef = useRef<SVGSVGElement>(null)
   const ellipseRef = useRef<SVGEllipseElement>(null)
   const [done, setDone] = useState(false)
+  const startTimeRef = useRef<number | null>(null)
+  const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
-    // Check if user has already passed the splash (e.g. on back navigation)
-    const alreadySeen = sessionStorage.getItem('julie-splash-done')
-    if (alreadySeen) {
+    // Skip splash if already seen this session
+    if (sessionStorage.getItem('julie-splash-done')) {
       setDone(true)
       return
     }
 
-    const section = sectionRef.current
-    const ellipse = ellipseRef.current
-    if (!section || !ellipse) return
+    const delay = setTimeout(() => {
+      function tick(timestamp: number) {
+        if (!startTimeRef.current) startTimeRef.current = timestamp
+        const elapsed = timestamp - startTimeRef.current
+        const raw = Math.min(elapsed / DURATION_MS, 1)
+        const progress = easeInOut(raw)
 
-    const splashHeight = section.getBoundingClientRect().height
+        const ellipse = ellipseRef.current
+        if (ellipse) {
+          const vw = window.innerWidth
+          const vh = window.innerHeight
 
-    function update() {
-      if (!section || !ellipse) return
-      const scrollY = window.scrollY
-      const raw = Math.min(scrollY / splashHeight, 1)
-      const progress = easeInOut(raw)
+          // Ellipse grows from below viewport upward and outward
+          const rx = vw * 1.4 * progress
+          const ry = vh * 1.5 * progress
+          const cx = vw / 2
+          const startCy = vh + 80
+          const endCy = vh * 0.45
+          const cy = startCy - (startCy - endCy) * progress
 
-      const vw = window.innerWidth
-      const vh = window.innerHeight
+          ellipse.setAttribute('cx', String(cx))
+          ellipse.setAttribute('cy', String(cy))
+          ellipse.setAttribute('rx', String(rx))
+          ellipse.setAttribute('ry', String(ry))
+        }
 
-      // Ellipse starts small at bottom-centre, expands to cover viewport
-      const maxRx = vw * 0.9
-      const maxRy = vh * 1.2
-
-      const rx = maxRx * progress
-      const ry = maxRy * progress
-
-      // cy starts below viewport and rises to centre as progress increases
-      const startCy = vh + 50
-      const endCy = vh * 0.5
-      const cy = startCy - (startCy - endCy) * progress
-
-      ellipse.setAttribute('rx', String(rx))
-      ellipse.setAttribute('ry', String(ry))
-      ellipse.setAttribute('cx', String(vw / 2))
-      ellipse.setAttribute('cy', String(cy))
-
-      if (progress >= 1) {
-        sessionStorage.setItem('julie-splash-done', '1')
-        setDone(true)
-        window.removeEventListener('scroll', update)
+        if (raw < 1) {
+          rafRef.current = requestAnimationFrame(tick)
+        } else {
+          sessionStorage.setItem('julie-splash-done', '1')
+          setDone(true)
+        }
       }
+
+      rafRef.current = requestAnimationFrame(tick)
+    }, DELAY_MS)
+
+    return () => {
+      clearTimeout(delay)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-
-    window.addEventListener('scroll', update, { passive: true })
-    update() // run once on mount in case page is already scrolled
-
-    return () => window.removeEventListener('scroll', update)
   }, [])
 
   if (done) return null
 
   return (
-    <div
-      ref={sectionRef}
-      // Tall section gives scroll room for the reveal
-      className="relative"
-      style={{ height: '160vh' }}
-    >
-      {/* Content behind the overlay — name + tagline */}
+    <div className="fixed inset-0" style={{ zIndex: 100 }}>
+
+      {/* Warm background — visible through the growing ink hole */}
       <div
-        className="sticky top-0 h-screen flex flex-col items-center justify-center"
+        className="absolute inset-0 flex flex-col items-center justify-center gap-3"
         style={{ backgroundColor: '#f5f2ee' }}
       >
         <h1
-          className="font-seasons font-light text-6xl md:text-8xl tracking-wide mb-4"
-          style={{ color: '#3a2e1e' }}
+          className="font-seasons font-light tracking-widest"
+          style={{ fontSize: 'clamp(3rem, 10vw, 7rem)', color: '#3a2e1e' }}
         >
           Julie
         </h1>
         <p
-          className="font-seasons italic text-xl md:text-2xl tracking-wide"
-          style={{ color: '#8a7560' }}
+          className="font-seasons italic tracking-wide"
+          style={{ fontSize: 'clamp(1rem, 2.5vw, 1.5rem)', color: '#8a7560' }}
         >
           Your story, told with care.
         </p>
       </div>
 
-      {/* SVG overlay with ink-drop mask */}
+      {/* Dark green overlay with growing ink-drop hole */}
       <svg
-        ref={overlayRef}
-        className="fixed inset-0 w-full h-full pointer-events-none"
-        style={{ zIndex: 50 }}
+        className="absolute inset-0 w-full h-full"
         xmlns="http://www.w3.org/2000/svg"
+        style={{ pointerEvents: 'none' }}
       >
         <defs>
-          {/* Radial gradient for soft/feathered ink edge */}
-          <radialGradient id="inkGradient" cx="50%" cy="50%" r="50%">
-            <stop offset="70%" stopColor="white" stopOpacity="1" />
-            <stop offset="100%" stopColor="white" stopOpacity="0" />
-          </radialGradient>
+          {/* Blur gives the soft feathered ink-bleed edge */}
+          <filter id="splash-blur" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="22" />
+          </filter>
 
-          <mask id="inkMask">
-            {/* White rect = show overlay everywhere */}
+          <mask id="splash-mask">
+            {/* White = show overlay (green) */}
             <rect width="100%" height="100%" fill="white" />
-            {/* Black (via gradient) ellipse = cut the hole */}
+            {/* Black ellipse = cut hole through overlay, soft edge via blur */}
             <ellipse
               ref={ellipseRef}
-              cx="50%"
-              cy="110%"
+              cx="0"
+              cy="0"
               rx="0"
               ry="0"
-              fill="url(#inkGradient)"
+              fill="black"
+              filter="url(#splash-blur)"
             />
           </mask>
         </defs>
 
-        {/* Dark green overlay, masked by the ink-drop ellipse */}
+        {/* The green overlay — hole grows as ellipse expands */}
         <rect
           width="100%"
           height="100%"
           fill="#1a3a2a"
-          mask="url(#inkMask)"
+          mask="url(#splash-mask)"
         />
       </svg>
+
     </div>
   )
 }
