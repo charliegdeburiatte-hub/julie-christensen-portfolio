@@ -6,15 +6,29 @@ function easeOut(t: number): number {
   return 1 - Math.pow(1 - t, 2.5)
 }
 
-const DELAY_MS = 700
-const DURATION_MS = 6000
+const DELAY_MS = 800
+const DURATION_MS = 7000
+
+// Central blob + organic tendrils spreading outward at irregular angles
+const BLOBS = [
+  // Central mass — starts immediately, grows large
+  { angle: 0,   dist: 0,    delay: 0,    size: 0.7 },
+  // Tendrils — staggered start, irregular angles, different reach
+  { angle: 20,  dist: 0.32, delay: 0.08, size: 0.42 },
+  { angle: 85,  dist: 0.38, delay: 0.14, size: 0.38 },
+  { angle: 140, dist: 0.3,  delay: 0.10, size: 0.44 },
+  { angle: 200, dist: 0.35, delay: 0.06, size: 0.40 },
+  { angle: 255, dist: 0.4,  delay: 0.12, size: 0.36 },
+  { angle: 315, dist: 0.33, delay: 0.09, size: 0.41 },
+  { angle: 170, dist: 0.28, delay: 0.18, size: 0.35 },
+  { angle: 50,  dist: 0.36, delay: 0.16, size: 0.37 },
+]
 
 export function InkDropSplash() {
-  const ellipseRef = useRef<SVGEllipseElement>(null)
-  const turbRef = useRef<SVGFETurbulenceElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
   const [done, setDone] = useState(false)
-  const startTimeRef = useRef<number | null>(null)
+  const startRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -23,39 +37,76 @@ export function InkDropSplash() {
       return
     }
 
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const resize = () => {
+      canvas.width = window.innerWidth
+      canvas.height = window.innerHeight
+    }
+    resize()
+    window.addEventListener('resize', resize)
+
     const delay = setTimeout(() => {
       function tick(timestamp: number) {
-        if (!startTimeRef.current) startTimeRef.current = timestamp
-        const elapsed = timestamp - startTimeRef.current
+        const c = canvasRef.current
+        const context = c?.getContext('2d')
+        if (!c || !context) return
+
+        if (!startRef.current) startRef.current = timestamp
+        const elapsed = timestamp - startRef.current
         const raw = Math.min(elapsed / DURATION_MS, 1)
-        const progress = easeOut(raw)
 
-        const vw = window.innerWidth
-        const vh = window.innerHeight
+        const w = c.width
+        const h = c.height
+        const cx = w / 2
+        const cy = h / 2
+        const diag = Math.sqrt(w * w + h * h)
 
-        // Grow ellipse from center outward
-        const ellipse = ellipseRef.current
-        if (ellipse) {
-          const rx = vw * 1.7 * progress
-          const ry = vh * 1.7 * progress
-          ellipse.setAttribute('cx', String(vw / 2))
-          ellipse.setAttribute('cy', String(vh / 2))
-          ellipse.setAttribute('rx', String(rx))
-          ellipse.setAttribute('ry', String(ry))
+        // Step 1: fill canvas with dark green (the overlay)
+        context.clearRect(0, 0, w, h)
+        context.fillStyle = '#1a3a2a'
+        context.fillRect(0, 0, w, h)
+
+        // Step 2: cut holes via destination-out — each blob punches through
+        context.globalCompositeOperation = 'destination-out'
+
+        for (const blob of BLOBS) {
+          // Each blob has its own progress timeline
+          const blobRaw = blob.delay >= 1
+            ? 0
+            : Math.min(Math.max(raw - blob.delay, 0) / (1 - blob.delay), 1)
+          const progress = easeOut(blobRaw)
+          if (progress <= 0) continue
+
+          const angleRad = (blob.angle * Math.PI) / 180
+          // Blob centre drifts outward from cx/cy as progress increases
+          const bx = cx + Math.sin(angleRad) * blob.dist * diag * progress
+          const by = cy - Math.cos(angleRad) * blob.dist * diag * progress
+          const r = blob.size * diag * progress
+
+          // Steep gradient: mostly opaque, fades only at the very edge
+          // This gives a defined ink edge rather than a soft halo
+          const grad = context.createRadialGradient(bx, by, 0, bx, by, r)
+          grad.addColorStop(0,   'rgba(0,0,0,1)')
+          grad.addColorStop(0.75,'rgba(0,0,0,1)')
+          grad.addColorStop(0.88,'rgba(0,0,0,0.85)')
+          grad.addColorStop(1,   'rgba(0,0,0,0)')
+
+          context.beginPath()
+          context.arc(bx, by, r, 0, Math.PI * 2)
+          context.fillStyle = grad
+          context.fill()
         }
 
-        // Slowly drift turbulence baseFrequency to make ink feel alive
-        const turb = turbRef.current
-        if (turb) {
-          const freq = 0.012 + progress * 0.006
-          turb.setAttribute('baseFrequency', String(freq))
-        }
+        context.globalCompositeOperation = 'source-over'
 
-        // Fade text out early — gone by 25% through animation
+        // Fade text out before the hole reaches it
         const text = textRef.current
         if (text) {
-          const textOpacity = Math.max(0, 1 - progress / 0.22)
-          text.style.opacity = String(textOpacity)
+          text.style.opacity = String(Math.max(0, 1 - raw / 0.18))
         }
 
         if (raw < 1) {
@@ -72,6 +123,7 @@ export function InkDropSplash() {
     return () => {
       clearTimeout(delay)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      window.removeEventListener('resize', resize)
     }
   }, [])
 
@@ -79,74 +131,10 @@ export function InkDropSplash() {
 
   return (
     <div className="fixed inset-0" style={{ zIndex: 100 }}>
+      {/* Canvas draws the dark green overlay and erases it organically */}
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
-      {/* SVG: dark green overlay, ink hole expands from center */}
-      <svg
-        className="absolute inset-0 w-full h-full"
-        xmlns="http://www.w3.org/2000/svg"
-        style={{ pointerEvents: 'none' }}
-      >
-        <defs>
-          <filter id="ink-filter" x="-40%" y="-40%" width="180%" height="180%"
-            color-interpolation-filters="linearRGB">
-            {/*
-              1. Turbulence — fractal noise gives the organic ink surface
-              2. DisplacementMap — warps the ellipse edge into organic tendrils
-              3. Small blur — softens before thresholding
-              4. ColorMatrix threshold — turns soft gradient into hard ink edge
-                 (high alpha multiplier + negative bias = sharp organic boundary)
-            */}
-            <feTurbulence
-              ref={turbRef}
-              type="fractalNoise"
-              baseFrequency="0.012"
-              numOctaves="5"
-              seed="14"
-              result="noise"
-            />
-            <feDisplacementMap
-              in="SourceGraphic"
-              in2="noise"
-              scale="90"
-              xChannelSelector="R"
-              yChannelSelector="G"
-              result="displaced"
-            />
-            <feGaussianBlur in="displaced" stdDeviation="4" result="blurred" />
-            {/* Threshold: turns the blurred shape into sharp ink tendrils */}
-            <feColorMatrix
-              in="blurred"
-              type="matrix"
-              values="1 0 0 0 0
-                      0 1 0 0 0
-                      0 0 1 0 0
-                      0 0 0 22 -9"
-            />
-          </filter>
-
-          <mask id="ink-mask">
-            <rect width="100%" height="100%" fill="white" />
-            <ellipse
-              ref={ellipseRef}
-              cx="0"
-              cy="0"
-              rx="0"
-              ry="0"
-              fill="black"
-              filter="url(#ink-filter)"
-            />
-          </mask>
-        </defs>
-
-        <rect
-          width="100%"
-          height="100%"
-          fill="#1a3a2a"
-          mask="url(#ink-mask)"
-        />
-      </svg>
-
-      {/* Name + tagline on green — fades out early as ink begins spreading */}
+      {/* Text on top — fades out before the hole reaches the center */}
       <div
         ref={textRef}
         className="absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none"
@@ -164,7 +152,6 @@ export function InkDropSplash() {
           Your story, told with care.
         </p>
       </div>
-
     </div>
   )
 }
