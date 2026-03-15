@@ -205,11 +205,9 @@ export function InkDropSplash() {
 
   return (
     <div className="fixed inset-0" style={{ zIndex: 100 }}>
-      {/* Canvas starts fully green via CSS background before WebGL initialises */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
-        style={{ backgroundColor: '#1a3a2a' }}
       />
 
       <div
