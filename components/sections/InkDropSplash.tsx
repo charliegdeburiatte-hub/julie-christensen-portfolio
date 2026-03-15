@@ -133,8 +133,9 @@ function initGL(canvas: HTMLCanvasElement) {
 }
 
 export function InkDropSplash() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const textRef   = useRef<HTMLDivElement>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const canvasRef  = useRef<HTMLCanvasElement>(null)
+  const textRef    = useRef<HTMLDivElement>(null)
   const [done, setDone] = useState(false)
 
   useEffect(() => {
@@ -147,8 +148,6 @@ export function InkDropSplash() {
     if (!glCtx) { setDone(true); return } // WebGL unavailable — skip splash
 
     const { gl, uRes, uProgress, uTime } = glCtx
-
-    // Capture canvas dimensions as local vars so closures don't need the ref
     const cv = canvas
 
     const resize = () => {
@@ -159,11 +158,17 @@ export function InkDropSplash() {
     resize()
     window.addEventListener('resize', resize)
 
-    // Draw initial frame (full green) before delay so site never flashes through
+    // Draw first frame immediately (all green, progress=0) — canvas now covers
+    // the site so it's safe to remove the wrapper's CSS background fallback
     gl.uniform2f(uRes, cv.width, cv.height)
     gl.uniform1f(uProgress, 0)
     gl.uniform1f(uTime, 0)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+
+    // Canvas is now fully green — wrapper background no longer needed.
+    // Clearing it means transparent WebGL pixels show the real site, not green.
+    const wrapper = wrapperRef.current
+    if (wrapper) wrapper.style.backgroundColor = 'transparent'
 
     let startTime: number | null = null
     let rafId: number
@@ -204,7 +209,7 @@ export function InkDropSplash() {
   if (done) return null
 
   return (
-    <div className="fixed inset-0" style={{ zIndex: 100 }}>
+    <div ref={wrapperRef} className="fixed inset-0" style={{ zIndex: 100, backgroundColor: '#1a3a2a' }}>
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
