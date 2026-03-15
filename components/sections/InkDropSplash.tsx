@@ -65,10 +65,11 @@ const FRAG = `
     );
     float f = fbm(uv * 2.0 + 2.8 * r + flow * 0.18);
 
-    // Distance from centre, heavily warped by the noise field
-    // The warp amount grows with progress so early frames are tighter
+    // Distance from centre, warped by noise field.
+    // Base warp of 0.35 is always present so the shape is never a perfect circle —
+    // it starts as an irregular blob and grows increasingly complex as t increases.
     float dist = length(uv);
-    float warp = f * 0.85 * smoothstep(0.0, 0.6, t);
+    float warp = f * (0.35 + 0.65 * smoothstep(0.0, 0.6, t));
     float warped = dist - warp;
 
     // Ink front expands from 0 → 1.6 (overshoots screen edges)
