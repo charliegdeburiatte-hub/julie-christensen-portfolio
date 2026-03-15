@@ -2,127 +2,201 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-function easeOut(t: number): number {
-  return 1 - Math.pow(1 - t, 2.5)
+// Full-screen quad — covers the entire viewport
+const VERT = `
+  attribute vec2 a_pos;
+  void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`
+
+// Fragment shader — domain-warped fractal noise creates genuine ink tendrils
+// Technique: fbm(fbm(fbm(p))) warps space so heavily it produces complex
+// branching shapes that look like ink dispersing in water
+const FRAG = `
+  precision highp float;
+  uniform vec2  u_res;
+  uniform float u_progress;
+  uniform float u_time;
+
+  // Gradient noise
+  vec2 hash(vec2 p) {
+    p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+    return -1.0 + 2.0 * fract(sin(p) * 43758.5453);
+  }
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(dot(hash(i + vec2(0,0)), f - vec2(0,0)),
+          dot(hash(i + vec2(1,0)), f - vec2(1,0)), u.x),
+      mix(dot(hash(i + vec2(0,1)), f - vec2(0,1)),
+          dot(hash(i + vec2(1,1)), f - vec2(1,1)), u.x), u.y
+    );
+  }
+
+  // Fractal Brownian Motion — 6 octaves for fine ink detail
+  float fbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+    for (int i = 0; i < 6; i++) {
+      v += a * noise(p);
+      p  = rot * p * 2.1 + vec2(100.0);
+      a *= 0.5;
+    }
+    return v;
+  }
+
+  void main() {
+    // UV centred, aspect-corrected
+    vec2 uv = (gl_FragCoord.xy - u_res * 0.5) / min(u_res.x, u_res.y);
+
+    float t    = u_progress;
+    float flow = u_time * 0.12; // slow drift — ink moves, doesn't teleport
+
+    // Three layers of domain warping (fbm of fbm of fbm)
+    // Each warp makes the boundary more complex and ink-like
+    vec2 q = vec2(
+      fbm(uv * 2.8 + vec2(flow, flow * 0.6)),
+      fbm(uv * 2.8 + vec2(5.2 + flow * 0.7, 1.3))
+    );
+    vec2 r = vec2(
+      fbm(uv * 2.8 + 2.2 * q + vec2(1.7, 9.2) + flow * 0.35),
+      fbm(uv * 2.8 + 2.2 * q + vec2(8.3, 2.8) + flow * 0.28)
+    );
+    float f = fbm(uv * 2.0 + 2.8 * r + flow * 0.18);
+
+    // Distance from centre, heavily warped by the noise field
+    // The warp amount grows with progress so early frames are tighter
+    float dist = length(uv);
+    float warp = f * 0.85 * smoothstep(0.0, 0.6, t);
+    float warped = dist - warp;
+
+    // Ink front expands from 0 → 1.6 (overshoots screen edges)
+    float radius = t * 1.55;
+
+    // Sharp threshold — this is what makes it look like ink not fog
+    // 0.025 spread keeps a very tight organic edge
+    float ink = 1.0 - smoothstep(radius - 0.025, radius + 0.025, warped);
+
+    // Dark green overlay (#1a3a2a) fades out where ink has spread
+    gl_FragColor = vec4(0.102, 0.227, 0.165, 1.0 - ink);
+  }
+`
+
+const DELAY_MS    = 800
+const DURATION_MS = 8000
+
+function easeInOut(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
 }
 
-const DELAY_MS = 800
-const DURATION_MS = 7000
+function compileShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {
+  const s = gl.createShader(type)
+  if (!s) return null
+  gl.shaderSource(s, src)
+  gl.compileShader(s)
+  return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null
+}
 
-// Central blob + organic tendrils spreading outward at irregular angles
-const BLOBS = [
-  // Central mass — starts immediately, grows large
-  { angle: 0,   dist: 0,    delay: 0,    size: 0.7 },
-  // Tendrils — staggered start, irregular angles, different reach
-  { angle: 20,  dist: 0.32, delay: 0.08, size: 0.42 },
-  { angle: 85,  dist: 0.38, delay: 0.14, size: 0.38 },
-  { angle: 140, dist: 0.3,  delay: 0.10, size: 0.44 },
-  { angle: 200, dist: 0.35, delay: 0.06, size: 0.40 },
-  { angle: 255, dist: 0.4,  delay: 0.12, size: 0.36 },
-  { angle: 315, dist: 0.33, delay: 0.09, size: 0.41 },
-  { angle: 170, dist: 0.28, delay: 0.18, size: 0.35 },
-  { angle: 50,  dist: 0.36, delay: 0.16, size: 0.37 },
-]
+function initGL(canvas: HTMLCanvasElement) {
+  const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false })
+  if (!gl) return null
+
+  const vs = compileShader(gl, gl.VERTEX_SHADER, VERT)
+  const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAG)
+  if (!vs || !fs) return null
+
+  const prog = gl.createProgram()
+  if (!prog) return null
+  gl.attachShader(prog, vs)
+  gl.attachShader(prog, fs)
+  gl.linkProgram(prog)
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null
+  gl.useProgram(prog)
+
+  const buf = gl.createBuffer()
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW)
+  const pos = gl.getAttribLocation(prog, 'a_pos')
+  gl.enableVertexAttribArray(pos)
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0)
+
+  gl.enable(gl.BLEND)
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+  return {
+    gl,
+    uRes:      gl.getUniformLocation(prog, 'u_res'),
+    uProgress: gl.getUniformLocation(prog, 'u_progress'),
+    uTime:     gl.getUniformLocation(prog, 'u_time'),
+  }
+}
 
 export function InkDropSplash() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const textRef = useRef<HTMLDivElement>(null)
+  const textRef   = useRef<HTMLDivElement>(null)
   const [done, setDone] = useState(false)
-  const startRef = useRef<number | null>(null)
-  const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
-    if (sessionStorage.getItem('julie-splash-done')) {
-      setDone(true)
-      return
-    }
+    if (sessionStorage.getItem('julie-splash-done')) { setDone(true); return }
 
     const canvas = canvasRef.current
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+
+    const glCtx = initGL(canvas)
+    if (!glCtx) { setDone(true); return } // WebGL unavailable — skip splash
+
+    const { gl, uRes, uProgress, uTime } = glCtx
+
+    // Capture canvas dimensions as local vars so closures don't need the ref
+    const cv = canvas
 
     const resize = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
+      cv.width  = window.innerWidth
+      cv.height = window.innerHeight
+      gl.viewport(0, 0, cv.width, cv.height)
     }
     resize()
     window.addEventListener('resize', resize)
 
+    // Draw initial frame (full green) before delay so site never flashes through
+    gl.uniform2f(uRes, cv.width, cv.height)
+    gl.uniform1f(uProgress, 0)
+    gl.uniform1f(uTime, 0)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+
+    let startTime: number | null = null
+    let rafId: number
+
     const delay = setTimeout(() => {
-      function tick(timestamp: number) {
-        const c = canvasRef.current
-        const context = c?.getContext('2d')
-        if (!c || !context) return
+      function tick(ts: number) {
+        if (!startTime) startTime = ts
+        const elapsed  = ts - startTime
+        const raw      = Math.min(elapsed / DURATION_MS, 1)
+        const progress = easeInOut(raw)
 
-        if (!startRef.current) startRef.current = timestamp
-        const elapsed = timestamp - startRef.current
-        const raw = Math.min(elapsed / DURATION_MS, 1)
+        gl.uniform2f(uRes, cv.width, cv.height)
+        gl.uniform1f(uProgress, progress)
+        gl.uniform1f(uTime, elapsed / 1000)
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
-        const w = c.width
-        const h = c.height
-        const cx = w / 2
-        const cy = h / 2
-        const diag = Math.sqrt(w * w + h * h)
-
-        // Step 1: fill canvas with dark green (the overlay)
-        context.clearRect(0, 0, w, h)
-        context.fillStyle = '#1a3a2a'
-        context.fillRect(0, 0, w, h)
-
-        // Step 2: cut holes via destination-out — each blob punches through
-        context.globalCompositeOperation = 'destination-out'
-
-        for (const blob of BLOBS) {
-          // Each blob has its own progress timeline
-          const blobRaw = blob.delay >= 1
-            ? 0
-            : Math.min(Math.max(raw - blob.delay, 0) / (1 - blob.delay), 1)
-          const progress = easeOut(blobRaw)
-          if (progress <= 0) continue
-
-          const angleRad = (blob.angle * Math.PI) / 180
-          // Blob centre drifts outward from cx/cy as progress increases
-          const bx = cx + Math.sin(angleRad) * blob.dist * diag * progress
-          const by = cy - Math.cos(angleRad) * blob.dist * diag * progress
-          const r = blob.size * diag * progress
-
-          // Steep gradient: mostly opaque, fades only at the very edge
-          // This gives a defined ink edge rather than a soft halo
-          const grad = context.createRadialGradient(bx, by, 0, bx, by, r)
-          grad.addColorStop(0,   'rgba(0,0,0,1)')
-          grad.addColorStop(0.75,'rgba(0,0,0,1)')
-          grad.addColorStop(0.88,'rgba(0,0,0,0.85)')
-          grad.addColorStop(1,   'rgba(0,0,0,0)')
-
-          context.beginPath()
-          context.arc(bx, by, r, 0, Math.PI * 2)
-          context.fillStyle = grad
-          context.fill()
-        }
-
-        context.globalCompositeOperation = 'source-over'
-
-        // Fade text out before the hole reaches it
+        // Text fades out in the first 15% of the animation
         const text = textRef.current
-        if (text) {
-          text.style.opacity = String(Math.max(0, 1 - raw / 0.18))
-        }
+        if (text) text.style.opacity = String(Math.max(0, 1 - raw / 0.15))
 
         if (raw < 1) {
-          rafRef.current = requestAnimationFrame(tick)
+          rafId = requestAnimationFrame(tick)
         } else {
           sessionStorage.setItem('julie-splash-done', '1')
           setDone(true)
         }
       }
-
-      rafRef.current = requestAnimationFrame(tick)
+      rafId = requestAnimationFrame(tick)
     }, DELAY_MS)
 
     return () => {
       clearTimeout(delay)
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      cancelAnimationFrame(rafId)
       window.removeEventListener('resize', resize)
     }
   }, [])
@@ -131,10 +205,13 @@ export function InkDropSplash() {
 
   return (
     <div className="fixed inset-0" style={{ zIndex: 100 }}>
-      {/* Canvas draws the dark green overlay and erases it organically */}
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      {/* Canvas starts fully green via CSS background before WebGL initialises */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full"
+        style={{ backgroundColor: '#1a3a2a' }}
+      />
 
-      {/* Text on top — fades out before the hole reaches the center */}
       <div
         ref={textRef}
         className="absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none"
