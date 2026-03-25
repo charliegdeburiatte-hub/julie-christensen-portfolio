@@ -79,13 +79,26 @@ const FRAG = `
     // 0.025 spread keeps a very tight organic edge
     float ink = 1.0 - smoothstep(radius - 0.025, radius + 0.025, warped);
 
+    // Keep the canvas fully opaque while the name text is on screen.
+    // Without this, the base warp creates transparent holes at the centre from
+    // frame one — the site bleeds through behind the fading text.
+    // holdAlpha releases gradually so the ink takes over cleanly.
+    float holdAlpha = 1.0 - smoothstep(0.0, 0.25, t);
+
     // Dark green overlay (#1a3a2a) fades out where ink has spread
-    gl_FragColor = vec4(0.102, 0.227, 0.165, 1.0 - ink);
+    gl_FragColor = vec4(0.102, 0.227, 0.165, max(holdAlpha, 1.0 - ink));
   }
 `
 
-const DELAY_MS    = 2200   // hold on name + tagline before ink starts
+// Short delay — text fades IN during this window so there is always motion,
+// no static dead-frame feel.
+const DELAY_MS    = 700
 const DURATION_MS = 8000
+
+// Text lifecycle (in raw 0–1 units of DURATION_MS)
+const TEXT_FADE_IN_MS        = 580   // ms — text rises from invisible to full
+const TEXT_FADE_OUT_RAW_START = 0.10  // raw progress when text starts to leave
+const TEXT_FADE_OUT_RAW_RANGE = 0.12  // raw progress range for full fade-out
 
 function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
@@ -159,22 +172,33 @@ export function InkDropSplash() {
     resize()
     window.addEventListener('resize', resize)
 
-    // Draw first frame immediately (all green, progress=0) — canvas now covers
-    // the site so it's safe to remove the wrapper's CSS background fallback
+    // Draw first frame immediately — canvas covers the site before JS paints anything
     gl.uniform2f(uRes, cv.width, cv.height)
     gl.uniform1f(uProgress, 0)
     gl.uniform1f(uTime, 0)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
-    // Canvas is now fully green — wrapper background no longer needed.
-    // Clearing it means transparent WebGL pixels show the real site, not green.
     const wrapper = wrapperRef.current
     if (wrapper) wrapper.style.backgroundColor = 'transparent'
 
+    // Phase 1 — text fades IN immediately so there is always motion, no dead frame
+    const fadeInStart = performance.now()
+    let fadeInRaf: number
+    const fadeIn = (ts: number) => {
+      const t = Math.min((ts - fadeInStart) / TEXT_FADE_IN_MS, 1)
+      if (textRef.current) textRef.current.style.opacity = String(t)
+      if (t < 1) fadeInRaf = requestAnimationFrame(fadeIn)
+    }
+    fadeInRaf = requestAnimationFrame(fadeIn)
+
+    // Phase 2 — ink animation starts after DELAY_MS
     let startTime: number | null = null
-    let rafId: number
+    let inkRaf: number
 
     const delay = setTimeout(() => {
+      // Ensure text is fully visible when ink starts
+      if (textRef.current) textRef.current.style.opacity = '1'
+
       function tick(ts: number) {
         if (!startTime) startTime = ts
         const elapsed  = ts - startTime
@@ -186,24 +210,30 @@ export function InkDropSplash() {
         gl.uniform1f(uTime, elapsed / 1000)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
-        // Text stays fully visible for the first 25% of the animation,
-        // then fades out over the next 20% — gives time to read name before ink covers it
+        // Text fades OUT early — while the shader's holdAlpha still keeps the canvas
+        // opaque, so the name always dissolves against solid green, never the site.
         const text = textRef.current
-        if (text) text.style.opacity = String(Math.max(0, 1 - Math.max(0, raw - 0.25) / 0.20))
+        if (text) {
+          const fadeOut = Math.max(0, Math.min(1,
+            (raw - TEXT_FADE_OUT_RAW_START) / TEXT_FADE_OUT_RAW_RANGE
+          ))
+          text.style.opacity = String(1 - fadeOut)
+        }
 
         if (raw < 1) {
-          rafId = requestAnimationFrame(tick)
+          inkRaf = requestAnimationFrame(tick)
         } else {
           sessionStorage.setItem('julie-splash-done', '1')
           setDone(true)
         }
       }
-      rafId = requestAnimationFrame(tick)
+      inkRaf = requestAnimationFrame(tick)
     }, DELAY_MS)
 
     return () => {
       clearTimeout(delay)
-      cancelAnimationFrame(rafId)
+      cancelAnimationFrame(fadeInRaf)
+      cancelAnimationFrame(inkRaf)
       window.removeEventListener('resize', resize)
     }
   }, [])
@@ -220,6 +250,7 @@ export function InkDropSplash() {
       <div
         ref={textRef}
         className="absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none"
+        style={{ opacity: 0 }}
       >
         <h1
           className="font-seasons font-light tracking-widest"
