@@ -84,7 +84,7 @@ const FRAG = `
   }
 `
 
-const DELAY_MS    = 800
+const DELAY_MS    = 2200   // hold on name + tagline before ink starts
 const DURATION_MS = 8000
 
 function easeInOut(t: number): number {
@@ -186,9 +186,10 @@ export function InkDropSplash() {
         gl.uniform1f(uTime, elapsed / 1000)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
-        // Text fades out in the first 15% of the animation
+        // Text stays fully visible for the first 25% of the animation,
+        // then fades out over the next 20% — gives time to read name before ink covers it
         const text = textRef.current
-        if (text) text.style.opacity = String(Math.max(0, 1 - raw / 0.15))
+        if (text) text.style.opacity = String(Math.max(0, 1 - Math.max(0, raw - 0.25) / 0.20))
 
         if (raw < 1) {
           rafId = requestAnimationFrame(tick)

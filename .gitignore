@@ -8,6 +8,11 @@
 
 # testing
 /coverage
+/test-results
+/playwright-report
+
+# screenshots (auto-generated — not committed)
+/screenshots
 
 # next.js
 /.next/
